@@ -39,6 +39,12 @@
 ****************************************************************************/
 
 #include <QtWidgets>
+#include <QMouseEvent>
+#include <utility>
+int absolute(int x, int y)
+{
+    return x>y ? x-y: y-x;
+}
 
 //! [0]
 class LightWidget : public QWidget
@@ -46,8 +52,13 @@ class LightWidget : public QWidget
     Q_OBJECT
     Q_PROPERTY(bool on READ isOn WRITE setOn)
 public:
-    LightWidget(const QColor &color, QWidget *parent = 0)
-        : QWidget(parent), m_color(color), m_on(false) {}
+    LightWidget(int row, int col, bool visible, QWidget *parent = 0)
+        :   QWidget(parent),
+            m_color(Qt::black),
+            m_on(visible),
+            m_row(row),
+            m_col(col),
+            is_selected(false){}
 
     bool isOn() const
         { return m_on; }
@@ -58,11 +69,22 @@ public:
         m_on = on;
         update();
     }
+    bool isValidMove(LightWidget* w)
+    {
+        return ((absolute(m_row,w->m_row)==2 && m_col == w->m_col)||
+                (absolute(m_col,w->m_col)==2 && m_row == w->m_row));
+
+    }
+    std::pair<int,int> getMidPoint(LightWidget *w)
+    {
+        return std::make_pair((m_row + w->m_row)/2, (m_col + w->m_col)/2);
+    }
 
 public slots:
     void turnOff() { setOn(false); }
     void turnOn() { setOn(true); }
-
+    void reset() {is_selected = false;}
+    bool isPeg() { return m_on;}
 protected:
     virtual void paintEvent(QPaintEvent *) Q_DECL_OVERRIDE
     {
@@ -70,101 +92,109 @@ protected:
             return;
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(m_color);
-        painter.drawEllipse(0, 0, width(), height());
+        int w = width();
+        int h = height();
+        painter.setBrush(is_selected?Qt::gray:m_color);
+        painter.drawEllipse(0, 0, w,h);
+        if(is_selected)
+        {
+            painter.setBrush(m_color);
+            w -=2;
+            h -= 2;
+            painter.drawEllipse(2, 2, w,h);
+
+        }
     }
+    void    mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE
+    {
+
+        if(m_on)
+        {
+            is_selected = true;
+            this->repaint();
+            emit selected(this);
+        }else{
+            emit selected(this);
+        }
+
+    }
+
+
+    signals:
+    void selected(LightWidget*);
+//    void    mouseReleaseEvent(QMouseEvent *event) Q_DECL_OVERRIDE
+//    {
+//        m_color=Qt::red;
+//        this->repaint();
+//    }
 
 private:
     QColor m_color;
     bool m_on;
+    bool is_selected;
+    int m_row,m_col;
 };
 //! [0]
 
 //! [1]
-class TrafficLightWidget : public QWidget
+bool IsValid(int i, int j)
 {
-public:
-    TrafficLightWidget(QWidget *parent = 0)
-        : QWidget(parent)
-    {
-        QVBoxLayout *vbox = new QVBoxLayout(this);
-        m_red = new LightWidget(Qt::red);
-        vbox->addWidget(m_red);
-        m_yellow = new LightWidget(Qt::yellow);
-        vbox->addWidget(m_yellow);
-        m_green = new LightWidget(Qt::green);
-        vbox->addWidget(m_green);
-        QPalette pal = palette();
-        pal.setColor(QPalette::Background, Qt::black);
-        setPalette(pal);
-        setAutoFillBackground(true);
-    }
-
-    LightWidget *redLight() const
-        { return m_red; }
-    LightWidget *yellowLight() const
-        { return m_yellow; }
-    LightWidget *greenLight() const
-        { return m_green; }
-
-private:
-    LightWidget *m_red;
-    LightWidget *m_yellow;
-    LightWidget *m_green;
-};
-//! [1]
-
-//! [2]
-QState *createLightState(LightWidget *light, int duration, QState *parent = 0)
-{
-    QState *lightState = new QState(parent);
-    QTimer *timer = new QTimer(lightState);
-    timer->setInterval(duration);
-    timer->setSingleShot(true);
-    QState *timing = new QState(lightState);
-    QObject::connect(timing, SIGNAL(entered()), light, SLOT(turnOn()));
-    QObject::connect(timing, SIGNAL(entered()), timer, SLOT(start()));
-    QObject::connect(timing, SIGNAL(exited()), light, SLOT(turnOff()));
-    QFinalState *done = new QFinalState(lightState);
-    timing->addTransition(timer, SIGNAL(timeout()), done);
-    lightState->setInitialState(timing);
-    return lightState;
+    return (i>=2 && i<5) || (j>=2 && j<5);
 }
-//! [2]
-
+//! [1]
 //! [3]
 class TrafficLight : public QWidget
 {
+    Q_OBJECT
 public:
     TrafficLight(QWidget *parent = 0)
-        : QWidget(parent)
+        : QWidget(parent),
+          active(0)
     {
-        QVBoxLayout *vbox = new QVBoxLayout(this);
-        TrafficLightWidget *widget = new TrafficLightWidget();
-        vbox->addWidget(widget);
-        vbox->setMargin(0);
-
-        QStateMachine *machine = new QStateMachine(this);
-        QState *redGoingYellow = createLightState(widget->redLight(), 3000);
-        redGoingYellow->setObjectName("redGoingYellow");
-        QState *yellowGoingGreen = createLightState(widget->yellowLight(), 1000);
-        yellowGoingGreen->setObjectName("yellowGoingGreen");
-        redGoingYellow->addTransition(redGoingYellow, SIGNAL(finished()), yellowGoingGreen);
-        QState *greenGoingYellow = createLightState(widget->greenLight(), 3000);
-        greenGoingYellow->setObjectName("greenGoingYellow");
-        yellowGoingGreen->addTransition(yellowGoingGreen, SIGNAL(finished()), greenGoingYellow);
-        QState *yellowGoingRed = createLightState(widget->yellowLight(), 1000);
-        yellowGoingRed->setObjectName("yellowGoingRed");
-        greenGoingYellow->addTransition(greenGoingYellow, SIGNAL(finished()), yellowGoingRed);
-        yellowGoingRed->addTransition(yellowGoingRed, SIGNAL(finished()), redGoingYellow);
-
-        machine->addState(redGoingYellow);
-        machine->addState(yellowGoingGreen);
-        machine->addState(greenGoingYellow);
-        machine->addState(yellowGoingRed);
-        machine->setInitialState(redGoingYellow);
-        machine->start();
+        QGridLayout *grid = new QGridLayout(this);
+        for(int i=0; i<7; ++i)
+            for(int j=0; j<7; ++j)
+          {
+                if(IsValid(i,j))
+                {
+                    LightWidget *red = new LightWidget(i,j,!(i==3 && j==3));
+                    grid->addWidget(red,i,j,1,1);
+                    red->connect(red,SIGNAL(selected(LightWidget*)), this, SLOT(onNewSelection(LightWidget*)));
+                    board[i][j] = red;
+                }
+                else
+                    board[i][j]=0;
+         }
     }
+private:
+    bool IsEmpty(std::pair<int,int> pos)
+    {
+        return board[pos.first][pos.second]->isOn();
+    }
+
+private slots:
+    void onNewSelection(LightWidget* cur)
+    {
+        if (cur->isPeg())
+        {
+            if (active)
+            {
+                active->reset();
+                active->repaint();
+            }
+            active = cur;
+        } else if (active && active->isValidMove(cur) && IsEmpty(active->getMidPoint(cur)) ) {
+            cur->turnOn();
+            active->turnOff();
+            active->reset();
+            std::pair<int,int> pos = active->getMidPoint(cur);
+            board[pos.first][pos.second]->turnOff();
+            active=0;
+        }
+    }
+private:
+    LightWidget* active;
+    LightWidget* board[7][7];
 };
 //! [3]
 
@@ -174,7 +204,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
 
     TrafficLight widget;
-    widget.resize(110, 300);
+    widget.resize(300, 300);
     widget.show();
 
     return app.exec();
